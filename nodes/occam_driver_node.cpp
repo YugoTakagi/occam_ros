@@ -202,101 +202,114 @@ public:
   }
 };
 
-class PointCloudPublisher : public Publisher {
-  OccamDataName req;
-  ros::Publisher pub;
-  unsigned seq;
+
+class PointCloudPublisher : public Publisher
+{
+//private:
+    OccamDataName req;
+    ros::Publisher pub;
+    unsigned seq;
+
 public:
-  PointCloudPublisher(OccamDataName _req, ros::NodeHandle nh)
-    : Publisher(_req),
-      req(_req),
-      seq(0) {
-
-    std::string req_name = dataNameString(req);
-    ROS_INFO("advertising %s",req_name.c_str());
-    pub = nh.advertise<sensor_msgs::PointCloud2>(nh.resolveName(req_name), 1);
-  }
-  virtual bool isRequested() {
-    if (pub.getNumSubscribers()>0)
-      ROS_INFO_THROTTLE(5,"subscribers of data %s = %i",dataNameString(req).c_str(),pub.getNumSubscribers());
-    return pub.getNumSubscribers()>0;
-  }
-  virtual void publish(void* data, const ros::Time& now) {
-    OccamPointCloud* pc0 = (OccamPointCloud*)data;
-    if (!pc0)
-      return;
-
-    ROS_INFO_THROTTLE(1,"sending data %s...",dataNameString(req).c_str());
-
-    sensor_msgs::PointCloud2 pc2;
-    pc2.header.seq = seq++;
-    pc2.header.frame_id = "occam";
-    pc2.header.stamp = now;
-
-    pc2.height = 1;
-    pc2.width = pc0->point_count;
-
-    unsigned point_step = 0;
-
-    sensor_msgs::PointField& fx = *pc2.fields.insert(pc2.fields.end(), sensor_msgs::PointField());
-    fx.name = "x";
-    fx.offset = point_step;
-    point_step += sizeof(float);
-    fx.datatype = sensor_msgs::PointField::FLOAT32;
-    fx.count = 1;
-
-    sensor_msgs::PointField& fy = *pc2.fields.insert(pc2.fields.end(), sensor_msgs::PointField());
-    fy.name = "y";
-    fy.offset = point_step;
-    point_step += sizeof(float);
-    fy.datatype = sensor_msgs::PointField::FLOAT32;
-    fy.count = 1;
-
-    sensor_msgs::PointField& fz = *pc2.fields.insert(pc2.fields.end(), sensor_msgs::PointField());
-    fz.name = "z";
-    fz.offset = point_step;
-    point_step += sizeof(float);
-    fz.datatype = sensor_msgs::PointField::FLOAT32;
-    fz.count = 1;
-
-    if (pc0->rgb) {
-      sensor_msgs::PointField& frgb = *pc2.fields.insert(pc2.fields.end(), sensor_msgs::PointField());
-      frgb.name = "rgb";
-      frgb.offset = point_step;
-      point_step += sizeof(float);
-      frgb.datatype = sensor_msgs::PointField::FLOAT32;
-      frgb.count = 1;
+    PointCloudPublisher(OccamDataName _req, ros::NodeHandle nh)
+    :Publisher(_req)
+    ,req(_req)
+    ,seq(0)
+    {
+        std::string req_name = dataNameString(req);
+        ROS_INFO("advertising %s",req_name.c_str());
+        pub = nh.advertise<sensor_msgs::PointCloud2>(nh.resolveName(req_name), 1);
     }
 
-    pc2.is_bigendian = false;
-    pc2.point_step = point_step;
-    pc2.row_step = point_step * pc0->point_count;
-    pc2.is_dense = true;
-
-    for (int j=0,k=0;j<pc0->point_count;++j,k+=3) {
-      float x = pc0->xyz[k+0] / 1000.f;
-      float y = pc0->xyz[k+1] / 1000.f;
-      float z = pc0->xyz[k+2] / 1000.f;
-
-      pc2.data.insert(pc2.data.end(), (uint8_t*)&x,(uint8_t*)&x + sizeof(x));
-      pc2.data.insert(pc2.data.end(), (uint8_t*)&y,(uint8_t*)&y + sizeof(y));
-      pc2.data.insert(pc2.data.end(), (uint8_t*)&z,(uint8_t*)&z + sizeof(z));
-
-      if (pc0->rgb) {
-     	uint8_t r = pc0->rgb[k+0];
-     	uint8_t g = pc0->rgb[k+1];
-     	uint8_t b = pc0->rgb[k+2];
-	uint32_t rgb = (uint32_t(r)<<16) | (uint32_t(g)<<8) | uint32_t(b);
-	float rgbf = *(float*)&rgb;
-	pc2.data.insert(pc2.data.end(), (uint8_t*)&rgbf,(uint8_t*)&rgbf + sizeof(rgbf));
-      }
+    virtual bool isRequested()
+    {
+        if (pub.getNumSubscribers()>0)
+            ROS_INFO_THROTTLE(5,"subscribers of data %s = %i",dataNameString(req).c_str(),pub.getNumSubscribers());
+        
+        return pub.getNumSubscribers()>0;
     }
 
-    pub.publish(pc2);
+    virtual void publish(void* data, const ros::Time& now) 
+    {
+        OccamPointCloud* pc0 = (OccamPointCloud*)data;
+        if (!pc0)
+            return;
 
-    occamFreePointCloud(pc0);
-  }
+        ROS_INFO_THROTTLE(1,"sending data %s...",dataNameString(req).c_str());
+
+        sensor_msgs::PointCloud2 pc2;
+        pc2.header.seq = seq++;
+        pc2.header.frame_id = "occam";
+        pc2.header.stamp = now;
+
+        pc2.height = 1;
+        pc2.width = pc0->point_count;
+
+        unsigned point_step = 0;
+
+        sensor_msgs::PointField& fx = *pc2.fields.insert(pc2.fields.end(), sensor_msgs::PointField());
+        fx.name = "x";
+        fx.offset = point_step;
+        point_step += sizeof(float);
+        fx.datatype = sensor_msgs::PointField::FLOAT32;
+        fx.count = 1;
+
+        sensor_msgs::PointField& fy = *pc2.fields.insert(pc2.fields.end(), sensor_msgs::PointField());
+        fy.name = "y";
+        fy.offset = point_step;
+        point_step += sizeof(float);
+        fy.datatype = sensor_msgs::PointField::FLOAT32;
+        fy.count = 1;
+
+        sensor_msgs::PointField& fz = *pc2.fields.insert(pc2.fields.end(), sensor_msgs::PointField());
+        fz.name = "z";
+        fz.offset = point_step;
+        point_step += sizeof(float);
+        fz.datatype = sensor_msgs::PointField::FLOAT32;
+        fz.count = 1;
+
+        if (pc0->rgb)
+        {
+            sensor_msgs::PointField& frgb = *pc2.fields.insert(pc2.fields.end(), sensor_msgs::PointField());
+            frgb.name = "rgb";
+            frgb.offset = point_step;
+            point_step += sizeof(float);
+            frgb.datatype = sensor_msgs::PointField::FLOAT32;
+            frgb.count = 1;
+        }
+
+        pc2.is_bigendian = false;
+        pc2.point_step = point_step;
+        pc2.row_step = point_step * pc0->point_count;
+        pc2.is_dense = true;
+
+        for (int j=0,k=0;j<pc0->point_count;++j,k+=3) 
+        {
+            float x = pc0->xyz[k+0] / 1000.f;
+            float y = pc0->xyz[k+1] / 1000.f;
+            float z = pc0->xyz[k+2] / 1000.f;
+
+            pc2.data.insert(pc2.data.end(), (uint8_t*)&x,(uint8_t*)&x + sizeof(x));
+            pc2.data.insert(pc2.data.end(), (uint8_t*)&y,(uint8_t*)&y + sizeof(y));
+            pc2.data.insert(pc2.data.end(), (uint8_t*)&z,(uint8_t*)&z + sizeof(z));
+
+            if (pc0->rgb)
+            {
+            	uint8_t r = pc0->rgb[k+0];
+            	uint8_t g = pc0->rgb[k+1];
+            	uint8_t b = pc0->rgb[k+2];
+                uint32_t rgb = (uint32_t(r)<<16) | (uint32_t(g)<<8) | uint32_t(b);
+                float rgbf = *(float*)&rgb;
+                pc2.data.insert(pc2.data.end(), (uint8_t*)&rgbf,(uint8_t*)&rgbf + sizeof(rgbf));
+            }
+        }
+
+        pub.publish(pc2);
+
+        occamFreePointCloud(pc0);
+    }
 };
+
 
 class OccamConfig {
   ros::NodeHandle nh;
@@ -654,6 +667,7 @@ public:
     }
 
 private:
+    //@breaf Make cameraInfo
     void publishCameraInfo(const ros::Time& now)
     {
         static unsigned header_seq = 0;
