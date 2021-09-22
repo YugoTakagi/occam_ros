@@ -689,7 +689,9 @@ private:
 
             ci.header.seq = header_seq++;
             ci.header.stamp = now;
-            ci.header.frame_id = "occam";
+            // 
+            // ci.header.frame_id = "occam";
+            ci.header.frame_id = "occam_cam_" + std::to_string(j);
 
             ci.width = sensor_width;
             ci.height = sensor_height;
