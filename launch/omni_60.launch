@@ -1,13 +1,24 @@
 <?xml version="1.0"?>
 <launch>
-  <!--
-    TODO: add any additional args needed to customize the node
-  -->
-  <arg name="name" default="omni_60" />
-
-  <node pkg="occam_ros" type="occam_driver_node" name="$(arg name)_node">
     <!--
-      TODO: add any parameters we need to pass to the driver node
+      TODO: add any additional args needed to customize the node
     -->
-  </node>
+    <arg name="name" default="omniStereo" />
+
+
+    <!-- set tf -->
+    <node pkg="tf2_ros" type="static_transform_publisher" name="occam2occamcam1" 
+          args="0.0 0.0 0.3 0.0 0.0 0.0 occam occam_cam_1" />
+    <node pkg="tf2_ros" type="static_transform_publisher" name="occam2occamcam0" 
+          args="0.0 0.0 0.2 0.0 0.0 0.0 occam occam_cam_0" />
+    <node pkg="tf2_ros" type="static_transform_publisher" name="base_link2occam" 
+        args="0.0 0.0 0.8 0.0 0.0 0.0 base_link occam"/>
+
+
+    <node pkg="occam_ros" type="occam_driver_node" name="$(arg name)_node">
+      <!--
+        TODO: add any parameters we need to pass to the driver node
+      -->
+    </node>
+
 </launch>
