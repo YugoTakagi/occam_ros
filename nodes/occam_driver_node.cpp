@@ -22,6 +22,8 @@
 #include <dynamic_reconfigure/Reconfigure.h>
 #include "indigo.h"
 
+#include <algorithm>
+
 static void reportError(int error_code) {
   ROS_ERROR("Occam API Error: %i", error_code);
   abort();
@@ -239,7 +241,38 @@ public:
 
         sensor_msgs::PointCloud2 pc2;
         pc2.header.seq = seq++;
-        pc2.header.frame_id = "occam";
+
+
+        // pc2.header.frame_id = "occam";
+        /*
+        if (std::equal(dataNameString(req).begin(), dataNameString(req).end(), "point_cloud0"))
+            pc2.header.frame_id = "occam_cam_0";
+        else if (std::equal(dataNameString(req).begin(), dataNameString(req).end(), "point_cloud1"))
+            pc2.header.frame_id = "occam_cam_2";
+        else if (std::equal(dataNameString(req).begin(), dataNameString(req).end(), "point_cloud2"))
+            pc2.header.frame_id = "occam_cam_4";
+        else if (std::equal(dataNameString(req).begin(), dataNameString(req).end(), "point_cloud3"))
+            pc2.header.frame_id = "occam_cam_6";
+        else if (std::equal(dataNameString(req).begin(), dataNameString(req).end(), "point_cloud4"))
+            pc2.header.frame_id = "occam_cam_8";
+        else
+            pc2.header.frame_id = "occam";
+        */
+        std::cout << ">>>>>" << dataNameString(req) << std::endl;
+        if ((std::string)dataNameString(req) == "point_cloud0")
+            pc2.header.frame_id = "occam_cam_0";
+        else if (dataNameString(req) == "point_cloud1")
+            pc2.header.frame_id = "occam_cam_2";
+        else if (dataNameString(req) == "point_cloud2")
+            pc2.header.frame_id = "occam_cam_4";
+        else if (dataNameString(req) == "point_cloud3")
+            pc2.header.frame_id = "occam_cam_6";
+        else if (dataNameString(req) == "point_cloud4")
+            pc2.header.frame_id = "occam_cam_8";
+        else
+            pc2.header.frame_id = "occam";
+
+
         pc2.header.stamp = now;
 
         pc2.height = 1;
