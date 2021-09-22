@@ -512,230 +512,257 @@ public:
   }
 };
 
+
+
 class OccamNode {
 public:
-  ros::NodeHandle nh;
+    ros::NodeHandle nh;
 
-  std::string cid;
-  OccamDevice* device;
-  std::vector<std::shared_ptr<Publisher> > data_pubs;
-  std::shared_ptr<OccamConfig> config;
-  std::vector<ros::Publisher> camera_info_pubs;
+    std::string cid;
+    OccamDevice* device;
+    std::vector<std::shared_ptr<Publisher> > data_pubs;
+    std::shared_ptr<OccamConfig> config;
+    std::vector<ros::Publisher> camera_info_pubs;
 
-  OccamNode() :
-    nh("~"),
-    device(0) {
+    OccamNode()
+    :nh("~")
+    ,device(0)
+    {
+        int r;
 
-    int r;
+        //@breaf Check device
+        OccamDeviceList* device_list;
+        OCCAM_CHECK(occamEnumerateDeviceList(2000, &device_list));
+        
+        if (device_list->entry_count > 0)
+          ROS_INFO("%i devices found", device_list->entry_count);
+        else
+          ROS_ERROR("No compatible devices detected");
+       
+        int dev_index = 0;
+        for (int i=0; i<device_list->entry_count; ++i)
+        {
+            if (!cid.empty() && device_list->entries[i].cid == cid)
+            {
+	            dev_index = i;
+            }
+            ROS_INFO("device[%i]: cid = %s",i,device_list->entries[i].cid);
+        }
 
-    OccamDeviceList* device_list;
-    OCCAM_CHECK(occamEnumerateDeviceList(2000, &device_list));
-    if (device_list->entry_count > 0)
-      ROS_INFO("%i devices found", device_list->entry_count);
-    else
-      ROS_ERROR("No compatible devices detected");
-    int dev_index = 0;
-    for (int i=0;i<device_list->entry_count;++i) {
-      if (!cid.empty() && device_list->entries[i].cid == cid) {
-	dev_index = i;
-      }
-      ROS_INFO("device[%i]: cid = %s",i,device_list->entries[i].cid);
+        if (dev_index<0 || dev_index >= device_list->entry_count)
+            return;
+        
+        if (!cid.empty() && device_list->entries[dev_index].cid != cid) 
+        {
+            ROS_ERROR("Requested cid %s not found",cid.c_str());
+            return;
+        }
+
+        OCCAM_CHECK(occamOpenDevice(device_list->entries[dev_index].cid, &device));
+        OCCAM_CHECK(occamFreeDeviceList(device_list));
+
+        int is_color = 0;
+        OCCAM_CHECK(occamGetDeviceValuei(device, OCCAM_COLOR, &is_color));
+
+        image_transport::ImageTransport it(nh);
+
+        int req_count;
+        OccamDataName* req;
+        OccamDataType* types;
+        OCCAM_CHECK(occamDeviceAvailableData(device, &req_count, &req, &types));
+        for (int j=0;j<req_count;++j) 
+        {
+            if (types[j] == OCCAM_IMAGE)
+	            data_pubs.push_back(std::make_shared<ImagePublisher>(req[j],it,is_color));
+            else if (types[j] == OCCAM_POINT_CLOUD)
+	            data_pubs.push_back(std::make_shared<PointCloudPublisher>(req[j],nh));
+        }
+
+        occamFree(req);
+        occamFree(types);
+
+        config = std::make_shared<OccamConfig>(nh,cid,device);
+
+        publishCameraInfo(ros::Time::now());
     }
-    if (dev_index<0 || dev_index >= device_list->entry_count)
-      return;
-    if (!cid.empty() && device_list->entries[dev_index].cid != cid) {
-      ROS_ERROR("Requested cid %s not found",cid.c_str());
-      return;
+
+    virtual ~OccamNode()
+    {
+        if (device)
+            occamCloseDevice(device);
     }
 
-    OCCAM_CHECK(occamOpenDevice(device_list->entries[dev_index].cid, &device));
-    OCCAM_CHECK(occamFreeDeviceList(device_list));
+    OccamNode(const OccamNode& x) = delete;
+    OccamNode& operator= (const OccamNode& rhs) = delete;
 
-    int is_color = 0;
-    OCCAM_CHECK(occamGetDeviceValuei(device, OCCAM_COLOR, &is_color));
+    bool take_and_send_data() 
+    {
+        int r;
 
-    image_transport::ImageTransport it(nh);
+        std::vector<OccamDataName> reqs;
+        std::vector<std::shared_ptr<Publisher> > reqs_pubs;
+        reqs.reserve(data_pubs.size());
+        reqs_pubs.reserve(data_pubs.size());
 
-    int req_count;
-    OccamDataName* req;
-    OccamDataType* types;
-    OCCAM_CHECK(occamDeviceAvailableData(device, &req_count, &req, &types));
-    for (int j=0;j<req_count;++j) {
-      if (types[j] == OCCAM_IMAGE)
-	data_pubs.push_back(std::make_shared<ImagePublisher>(req[j],it,is_color));
-      else if (types[j] == OCCAM_POINT_CLOUD)
-	data_pubs.push_back(std::make_shared<PointCloudPublisher>(req[j],nh));
+        for (std::shared_ptr<Publisher> pub : data_pubs)
+        {
+            if (pub->isRequested()) 
+            {
+                reqs.push_back(pub->dataName());
+                reqs_pubs.push_back(pub);
+            }
+        } 
+
+        std::vector<OccamDataType> types;
+        std::vector<void*> data;
+        types.resize(reqs.size());
+        data.resize(reqs.size());
+        r = occamDeviceReadData(device, reqs.size(), &reqs[0], &types[0], &data[0], 0);
+        if (r != OCCAM_API_SUCCESS && r != OCCAM_API_DATA_NOT_AVAILABLE) 
+        {
+            char error_str[256] = {0};
+            occamGetErrorString((OccamError)r, error_str, sizeof(error_str));
+            ROS_ERROR_THROTTLE(10,"Driver returned error %s (%i)",error_str,r);
+            
+            return false;
+        }
+        if (r != OCCAM_API_SUCCESS)
+            return false;
+
+        ros::Time now = ros::Time::now();
+        for (int j=0;j<reqs.size();++j)
+            reqs_pubs[j]->publish(data[j], now);
+        publishCameraInfo(now);
+
+        return true;
     }
-    occamFree(req);
-    occamFree(types);
 
-    config = std::make_shared<OccamConfig>(nh,cid,device);
+    bool spin()
+    {
+        if (!device)
+            return false;
 
-    publishCameraInfo(ros::Time::now());
-  }
+        while (nh.ok())
+        {
+            if (!take_and_send_data())
+                usleep(1000);
+            
+            ros::spinOnce();
+        }
 
-  virtual ~OccamNode() {
-    if (device)
-      occamCloseDevice(device);
-  }
-
-  OccamNode(const OccamNode& x) = delete;
-  OccamNode& operator= (const OccamNode& rhs) = delete;
-
-  bool take_and_send_data() {
-    int r;
-
-    std::vector<OccamDataName> reqs;
-    std::vector<std::shared_ptr<Publisher> > reqs_pubs;
-    reqs.reserve(data_pubs.size());
-    reqs_pubs.reserve(data_pubs.size());
-    for (std::shared_ptr<Publisher> pub : data_pubs)
-      if (pub->isRequested()) {
-	reqs.push_back(pub->dataName());
-	reqs_pubs.push_back(pub);
-      }
-
-    std::vector<OccamDataType> types;
-    std::vector<void*> data;
-    types.resize(reqs.size());
-    data.resize(reqs.size());
-    r = occamDeviceReadData(device, reqs.size(), &reqs[0], &types[0], &data[0], 0);
-    if (r != OCCAM_API_SUCCESS && r != OCCAM_API_DATA_NOT_AVAILABLE) {
-      char error_str[256] = {0};
-      occamGetErrorString((OccamError)r, error_str, sizeof(error_str));
-      ROS_ERROR_THROTTLE(10,"Driver returned error %s (%i)",error_str,r);
-      return false;
+        return true;
     }
-    if (r != OCCAM_API_SUCCESS)
-      return false;
-
-    ros::Time now = ros::Time::now();
-    for (int j=0;j<reqs.size();++j)
-      reqs_pubs[j]->publish(data[j], now);
-    publishCameraInfo(now);
-
-    return true;
-  }
-
-  bool spin() {
-    if (!device)
-      return false;
-
-    while (nh.ok()) {
-      if (!take_and_send_data())
-        usleep(1000);
-      ros::spinOnce();
-    }
-    return true;
-  }
 
 private:
-  void publishCameraInfo(const ros::Time& now) {
+    void publishCameraInfo(const ros::Time& now)
+    {
+        static unsigned header_seq = 0;
 
-    static unsigned header_seq = 0;
+        int sensor_count;
+        int sensor_width;
+        int sensor_height;
+        OCCAM_CHECK(occamGetDeviceValuei(device, OCCAM_SENSOR_COUNT, &sensor_count));
+        OCCAM_CHECK(occamGetDeviceValuei(device, OCCAM_SENSOR_WIDTH, &sensor_width));
+        OCCAM_CHECK(occamGetDeviceValuei(device, OCCAM_SENSOR_HEIGHT, &sensor_height));
 
-    int sensor_count;
-    int sensor_width;
-    int sensor_height;
-    OCCAM_CHECK(occamGetDeviceValuei(device, OCCAM_SENSOR_COUNT, &sensor_count));
-    OCCAM_CHECK(occamGetDeviceValuei(device, OCCAM_SENSOR_WIDTH, &sensor_width));
-    OCCAM_CHECK(occamGetDeviceValuei(device, OCCAM_SENSOR_HEIGHT, &sensor_height));
+        while (camera_info_pubs.size() < sensor_count)
+        {
+            std::stringstream sout;
+            sout << "camera_info" << camera_info_pubs.size();
+            ROS_INFO("advertising %s", sout.str().c_str());
+            camera_info_pubs.push_back(nh.advertise<sensor_msgs::CameraInfo>(sout.str(), 1, true));
+        }
 
-    while (camera_info_pubs.size()<sensor_count) {
-      std::stringstream sout;
-      sout<<"camera_info"<<camera_info_pubs.size();
-      ROS_INFO("advertising %s",sout.str().c_str());
-      camera_info_pubs.push_back(nh.advertise<sensor_msgs::CameraInfo>(sout.str(), 1, true));
+        int binning_mode = OCCAM_BINNING_DISABLED;
+        occamGetDeviceValuei(device, OCCAM_BINNING_MODE, &binning_mode);
+
+        for (int j=0; j<sensor_count; ++j) 
+        {
+            double D[5], K[9], R[9], T[3];
+
+            OCCAM_CHECK(occamGetDeviceValuerv(device, OccamParam(OCCAM_SENSOR_DISTORTION_COEFS0+j), D, 5));
+            OCCAM_CHECK(occamGetDeviceValuerv(device, OccamParam(OCCAM_SENSOR_INTRINSICS0+j), K, 9));
+            OCCAM_CHECK(occamGetDeviceValuerv(device, OccamParam(OCCAM_SENSOR_ROTATION0+j), R, 9));
+            OCCAM_CHECK(occamGetDeviceValuerv(device, OccamParam(OCCAM_SENSOR_TRANSLATION0+j), T, 3));
+
+            sensor_msgs::CameraInfo ci;
+
+            ci.header.seq = header_seq++;
+            ci.header.stamp = now;
+            ci.header.frame_id = "occam";
+
+            ci.width = sensor_width;
+            ci.height = sensor_height;
+
+            ci.distortion_model = "plumb_bob";
+            ci.D.assign(D,D+5);
+
+            ci.K[0] = K[0];
+            ci.K[1] = K[1];
+            ci.K[2] = K[2];
+            ci.K[3] = K[3];
+            ci.K[4] = K[4];
+            ci.K[5] = K[5];
+            ci.K[6] = K[6];
+            ci.K[7] = K[7];
+            ci.K[8] = K[8];
+
+            ci.R[0] = 1;
+            ci.R[1] = 0;
+            ci.R[2] = 0;
+            ci.R[3] = 0;
+            ci.R[4] = 1;
+            ci.R[5] = 0;
+            ci.R[6] = 0;
+            ci.R[7] = 0;
+            ci.R[8] = 1;
+
+            ci.P[0] = R[0];
+            ci.P[1] = R[1];
+            ci.P[2] = R[2];
+            ci.P[3] = T[0];
+            ci.P[4] = R[3];
+            ci.P[5] = R[4];
+            ci.P[6] = R[5];
+            ci.P[7] = T[1];
+            ci.P[8] = R[6];
+            ci.P[9] = R[7];
+            ci.P[10] = R[8];
+            ci.P[11] = T[2];
+
+            if (binning_mode == OCCAM_BINNING_2x2) 
+            {
+	            ci.binning_x = 2;
+	            ci.binning_y = 2;
+            } 
+            else if (binning_mode == OCCAM_BINNING_4x4) 
+            {
+	            ci.binning_x = 4;
+	            ci.binning_y = 4;
+            } 
+            else 
+            {
+	            ci.binning_x = 1;
+	            ci.binning_y = 1;
+            }
+
+            ci.roi.x_offset = 0;
+            ci.roi.y_offset = 0;
+            ci.roi.height = 0;
+            ci.roi.width = 0;
+            ci.roi.do_rectify = false;
+
+            camera_info_pubs[j].publish(ci);
+        }
     }
-
-    int binning_mode = OCCAM_BINNING_DISABLED;
-    occamGetDeviceValuei(device, OCCAM_BINNING_MODE, &binning_mode);
-
-    for (int j=0;j<sensor_count;++j) {
-      double D[5], K[9], R[9], T[3];
-
-      OCCAM_CHECK(occamGetDeviceValuerv
-		  (device, OccamParam(OCCAM_SENSOR_DISTORTION_COEFS0+j), D, 5));
-      OCCAM_CHECK(occamGetDeviceValuerv
-		  (device, OccamParam(OCCAM_SENSOR_INTRINSICS0+j), K, 9));
-      OCCAM_CHECK(occamGetDeviceValuerv
-		  (device, OccamParam(OCCAM_SENSOR_ROTATION0+j), R, 9));
-      OCCAM_CHECK(occamGetDeviceValuerv
-		  (device, OccamParam(OCCAM_SENSOR_TRANSLATION0+j), T, 3));
-
-      sensor_msgs::CameraInfo ci;
-
-      ci.header.seq = header_seq++;
-      ci.header.stamp = now;
-      ci.header.frame_id = "occam";
-
-      ci.width = sensor_width;
-      ci.height = sensor_height;
-
-      ci.distortion_model = "plumb_bob";
-      ci.D.assign(D,D+5);
-
-      ci.K[0] = K[0];
-      ci.K[1] = K[1];
-      ci.K[2] = K[2];
-      ci.K[3] = K[3];
-      ci.K[4] = K[4];
-      ci.K[5] = K[5];
-      ci.K[6] = K[6];
-      ci.K[7] = K[7];
-      ci.K[8] = K[8];
-
-      ci.R[0] = 1;
-      ci.R[1] = 0;
-      ci.R[2] = 0;
-      ci.R[3] = 0;
-      ci.R[4] = 1;
-      ci.R[5] = 0;
-      ci.R[6] = 0;
-      ci.R[7] = 0;
-      ci.R[8] = 1;
-
-      ci.P[0] = R[0];
-      ci.P[1] = R[1];
-      ci.P[2] = R[2];
-      ci.P[3] = T[0];
-      ci.P[4] = R[3];
-      ci.P[5] = R[4];
-      ci.P[6] = R[5];
-      ci.P[7] = T[1];
-      ci.P[8] = R[6];
-      ci.P[9] = R[7];
-      ci.P[10] = R[8];
-      ci.P[11] = T[2];
-
-      if (binning_mode == OCCAM_BINNING_2x2) {
-	ci.binning_x = 2;
-	ci.binning_y = 2;
-      } else if (binning_mode == OCCAM_BINNING_4x4) {
-	ci.binning_x = 4;
-	ci.binning_y = 4;
-      } else {
-	ci.binning_x = 1;
-	ci.binning_y = 1;
-      }
-
-      ci.roi.x_offset = 0;
-      ci.roi.y_offset = 0;
-      ci.roi.height = 0;
-      ci.roi.width = 0;
-      ci.roi.do_rectify = false;
-
-      camera_info_pubs[j].publish(ci);
-    }
-
-  }
 };
 
-int main(int argc, char **argv) {
-  OCCAM_CHECK(occamInitialize());
-  ros::init(argc, argv, "occam");
-  OccamNode a;
-  a.spin();
-  exit(0);
-  return 0;
+int main(int argc, char **argv) 
+{
+    OCCAM_CHECK(occamInitialize());
+    ros::init(argc, argv, "occam");
+    OccamNode a;
+    a.spin();
+    exit(0);
+    return 0;
 }
