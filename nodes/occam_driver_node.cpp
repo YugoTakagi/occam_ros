@@ -117,91 +117,229 @@ static std::string dataNameString(OccamDataName data_name) {
   return std::string();
 }
 
+
 class Publisher {
-  OccamDataName req;
+    OccamDataName req;
 public:
-  Publisher(OccamDataName _req)
-    : req(_req) {
-  }
-  Publisher(const Publisher& x) = delete;
-  Publisher& operator= (const Publisher& rhs) = delete;
-  OccamDataName dataName() const {
-    return req;
-  }
-  virtual bool isRequested() = 0;
-  virtual void publish(void* data, const ros::Time& now) = 0;
+    Publisher(OccamDataName _req)
+    :req(_req)
+    {
+    }
+    
+    Publisher(const Publisher& x) = delete;
+    Publisher& operator= (const Publisher& rhs) = delete;
+    OccamDataName dataName() const 
+    {
+        return req;
+    }
+    virtual bool isRequested() = 0;
+    virtual void publish(void* data, const ros::Time& now) = 0;
 };
 
+
 class ImagePublisher : public Publisher {
-  image_transport::Publisher pub;
-  OccamDataName req;
-  bool is_color;
-  std::atomic<int> subscribers;
-  unsigned seq;
+    image_transport::Publisher pub;
+    OccamDataName req;
+    bool is_color;
+    std::atomic<int> subscribers;
+    unsigned seq;
+
 public:
-  ImagePublisher(OccamDataName _req, image_transport::ImageTransport it, bool _is_color)
-    : Publisher(_req),
-      req(_req),
-      is_color(_is_color),
-      seq(0) {
-
-    std::string req_name = dataNameString(req);
-    ROS_INFO("advertising %s",req_name.c_str());
-    pub = it.advertise(req_name, 1);
-  }
-  virtual bool isRequested() {
-    if (pub.getNumSubscribers()>0)
-      ROS_INFO_THROTTLE(5,"subscribers of data %s = %i",dataNameString(req).c_str(),pub.getNumSubscribers());
-    return pub.getNumSubscribers()>0;
-  }
-  virtual void publish(void* data, const ros::Time& now) {
-    OccamImage* img0 = (OccamImage*)data;
-    if (!img0)
-      return;
-
-    ROS_INFO_THROTTLE(1,"sending data %s...",dataNameString(req).c_str());
-
-    const char* image_encoding = 0;
-    int bpp = 1;
-    switch (img0->format) {
-    case OCCAM_GRAY8:
-      bpp = 1;
-      image_encoding = is_color ? "bayer_bggr8" : "mono8";
-      break;
-    case OCCAM_RGB24:
-      bpp = 3;
-      image_encoding = "rgb8";
-      break;
-    case OCCAM_SHORT1:
-      bpp = 2;
-      image_encoding = "16SC1";
-      break;
+    ImagePublisher(OccamDataName _req, image_transport::ImageTransport it, bool _is_color)
+    :Publisher(_req)
+    ,req(_req)
+    ,is_color(_is_color)
+    ,seq(0) 
+    {
+        std::string req_name = dataNameString(req);
+        ROS_INFO("advertising %s",req_name.c_str());
+        pub = it.advertise(req_name, 1);
+    }
+    
+    virtual bool isRequested() 
+    {
+        if (pub.getNumSubscribers()>0)
+            ROS_INFO_THROTTLE(5,"subscribers of data %s = %i",dataNameString(req).c_str(),pub.getNumSubscribers());
+        
+        return pub.getNumSubscribers()>0;
     }
 
-    int width = img0->width;
-    int height = img0->height;
+    virtual void publish(void* data, const ros::Time& now) 
+    {
+        OccamImage* img0 = (OccamImage*)data;
+        if (!img0)
+            return;
 
-    sensor_msgs::Image img1;
-    img1.header.seq = seq++;
-    img1.header.frame_id = "occam";
-    img1.header.stamp = now;
-    img1.encoding = image_encoding;
-    img1.height = height;
-    img1.width = width;
-    img1.step = width*bpp;
-    img1.data.resize(img1.height*img1.step);
-    img1.is_bigendian = 0;
-    const uint8_t* srcp = img0->data[0];
-    int src_step = img0->step[0];
-    uint8_t* dstp = &img1.data[0];
-    int dst_step = img1.step;
-    for (int j=0;j<height;++j,dstp+=dst_step,srcp+=src_step)
-      memcpy(dstp,srcp,width*bpp);
+        ROS_INFO_THROTTLE(1,"sending data %s...",dataNameString(req).c_str());
 
-    pub.publish(img1);
+        const char* image_encoding = 0;
+        int bpp = 1;
+        switch (img0->format)
+        {
+            case OCCAM_GRAY8:
+                bpp = 1;
+                image_encoding = is_color ? "bayer_bggr8" : "mono8";
+                break;
+            case OCCAM_RGB24:
+                bpp = 3;
+                image_encoding = "rgb8";
+                break;
+            case OCCAM_SHORT1:
+                bpp = 2;
+                image_encoding = "16SC1";
+                break;
+        }
 
-    occamFreeImage(img0);
-  }
+        int width = img0->width;
+        int height = img0->height;
+
+        sensor_msgs::Image img1;
+        img1.header.seq = seq++;
+        
+
+        //img1.header.frame_id = "occam";
+        if
+        (
+            dataNameString(req) == "image0" or
+            dataNameString(req) == "raw_image0" or
+            dataNameString(req) == "undistorted_image0" or
+            dataNameString(req) == "rectified_image0" or
+            
+            dataNameString(req) == "disparity_image0"
+        )
+        {
+            img1.header.frame_id = "occam_camera_frame0";
+        }
+        
+        else if
+        (
+            dataNameString(req) == "image1" or
+            dataNameString(req) == "raw_image1" or
+            dataNameString(req) == "undistorted_image1" or
+            dataNameString(req) == "rectified_image1"
+        )
+        {
+            img1.header.frame_id = "occam_camera_frame1";
+        }
+
+        else if
+        (
+            dataNameString(req) == "image2" or
+            dataNameString(req) == "raw_image2" or
+            dataNameString(req) == "undistorted_image2" or
+            dataNameString(req) == "rectified_image2" or
+            
+            dataNameString(req) == "disparity_image1"
+        )
+        {
+            img1.header.frame_id = "occam_camera_frame2";
+        }
+        
+        else if
+        (
+            dataNameString(req) == "image3" or
+            dataNameString(req) == "raw_image3" or
+            dataNameString(req) == "undistorted_image3" or
+            dataNameString(req) == "rectified_image3"
+        )
+        {
+            img1.header.frame_id = "occam_camera_frame3";
+        }
+
+        else if
+        (
+            dataNameString(req) == "image4" or
+            dataNameString(req) == "raw_image4" or
+            dataNameString(req) == "undistorted_image4" or
+            dataNameString(req) == "rectified_image4" or
+            
+            dataNameString(req) == "disparity_image2"
+        )
+        {
+            img1.header.frame_id = "occam_camera_frame4";
+        }
+        
+        else if
+        (
+            dataNameString(req) == "image5" or
+            dataNameString(req) == "raw_image5" or
+            dataNameString(req) == "undistorted_image5" or
+            dataNameString(req) == "rectified_image5"
+        )
+        {
+            img1.header.frame_id = "occam_camera_frame5";
+        }
+        
+        else if
+        (
+            dataNameString(req) == "image6" or
+            dataNameString(req) == "raw_image6" or
+            dataNameString(req) == "undistorted_image6" or
+            dataNameString(req) == "rectified_image6" or
+            
+            dataNameString(req) == "disparity_image3"
+        )
+        {
+            img1.header.frame_id = "occam_camera_frame6";
+        }
+        
+        else if
+        (
+            dataNameString(req) == "image7" or
+            dataNameString(req) == "raw_image7" or
+            dataNameString(req) == "undistorted_image7" or
+            dataNameString(req) == "rectified_image7"
+        )
+        {
+            img1.header.frame_id = "occam_camera_frame7";
+        }
+
+        else if
+        (
+            dataNameString(req) == "image8" or
+            dataNameString(req) == "raw_image8" or
+            dataNameString(req) == "undistorted_image8" or
+            dataNameString(req) == "rectified_image8" or
+            
+            dataNameString(req) == "disparity_image4"
+        )
+        {
+            img1.header.frame_id = "occam_camera_frame8";
+        }
+        
+        else if
+        (
+            dataNameString(req) == "image9" or
+            dataNameString(req) == "raw_image9" or
+            dataNameString(req) == "undistorted_image9" or
+            dataNameString(req) == "rectified_image9"
+        )
+        {
+            img1.header.frame_id = "occam_camera_frame9";
+        }
+
+        else
+            img1.header.frame_id = "occam";
+
+
+        img1.header.stamp = now;
+        img1.encoding = image_encoding;
+        img1.height = height;
+        img1.width = width;
+        img1.step = width*bpp;
+        img1.data.resize(img1.height*img1.step);
+        img1.is_bigendian = 0;
+        const uint8_t* srcp = img0->data[0];
+        int src_step = img0->step[0];
+        uint8_t* dstp = &img1.data[0];
+        int dst_step = img1.step;
+        for (int j=0;j<height;++j,dstp+=dst_step,srcp+=src_step)
+            memcpy(dstp,srcp,width*bpp);
+
+        pub.publish(img1);
+
+        occamFreeImage(img0);
+    }
 };
 
 
@@ -258,17 +396,17 @@ public:
         else
             pc2.header.frame_id = "occam";
         */
-        std::cout << ">>>>>" << dataNameString(req) << std::endl;
-        if ((std::string)dataNameString(req) == "point_cloud0")
-            pc2.header.frame_id = "occam_cam_0";
+        //if ((std::string)dataNameString(req) == "point_cloud0")
+        if (dataNameString(req) == "point_cloud0")
+            pc2.header.frame_id = "occam_camera_optical_frame0";
         else if (dataNameString(req) == "point_cloud1")
-            pc2.header.frame_id = "occam_cam_2";
+            pc2.header.frame_id = "occam_camera_optical_frame2";
         else if (dataNameString(req) == "point_cloud2")
-            pc2.header.frame_id = "occam_cam_4";
+            pc2.header.frame_id = "occam_camera_optical_frame4";
         else if (dataNameString(req) == "point_cloud3")
-            pc2.header.frame_id = "occam_cam_6";
+            pc2.header.frame_id = "occam_camera_optical_frame6";
         else if (dataNameString(req) == "point_cloud4")
-            pc2.header.frame_id = "occam_cam_8";
+            pc2.header.frame_id = "occam_camera_optical_frame8";
         else
             pc2.header.frame_id = "occam";
 
@@ -738,7 +876,7 @@ private:
             ci.header.stamp = now;
             // 
             // ci.header.frame_id = "occam";
-            ci.header.frame_id = "occam_cam_" + std::to_string(j);
+            ci.header.frame_id = "occam_camera_optical_frame" + std::to_string(j);
 
             ci.width = sensor_width;
             ci.height = sensor_height;
@@ -805,6 +943,7 @@ private:
         }
     }
 };
+
 
 int main(int argc, char **argv) 
 {
